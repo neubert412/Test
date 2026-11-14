@@ -93,7 +93,7 @@
   /* ============================================================
      ⚠️ HIER DEINE GAS-WEB-APP-URL EINTRAGEN (endet auf /exec)
      ============================================================ */
-  const GAS_URL = 'https://script.google.com/macros/s/AKfycbzX873NtItGor5vDz5dfzqAfdF8sZyWuqmxeFOH3DJbzG8W0nDatMV9hEPRRllImPU0/exec';
+  const GAS_URL = 'https://script.google.com/macros/s/DEINE_ID_HIER/exec';
 
   let fields = [];
   let classes = [];
@@ -241,10 +241,6 @@
      QR-TEXT-PARSER
      ============================================================ */
 
-  /**
-   * Parst QR-Text im Format "Label: Wert" pro Zeile.
-   * Gibt null zurück, wenn kein bekanntes Label gefunden wurde.
-   */
   function parseQrText(text) {
     if (!text) return null;
 
@@ -268,10 +264,6 @@
     return map;
   }
 
-  /**
-   * Baut aus dem geparsten QR-Code einen Suchbegriff:
-   * "Aleksandra Herrmann 91 Ladies"
-   */
   function buildSearchTerm(parsed, fallbackText) {
     if (!parsed) return String(fallbackText || '').trim();
 
@@ -285,7 +277,13 @@
     return parts.join(' ').trim() || String(fallbackText || '').trim();
   }
 
-  function handleQrCodeResult(text) {
+  /**
+   * Verarbeitet einen gescannten QR-Code.
+   * - Genau 1 Treffer → Formular direkt laden
+   * - 0 Treffer → Fehlermeldung
+   * - >1 Treffer → Liste anzeigen
+   */
+  async function handleQrCodeResult(text) {
     const searchInput = document.getElementById('searchInput');
     if (!searchInput) return;
 
@@ -300,7 +298,19 @@
       showStatus('QR-Code eingelesen (unbekanntes Format).', 'info');
     }
 
-    searchDrivers();
+    // Scanner sofort stoppen, während die Suche läuft
+    stopScanner();
+
+    const results = await searchDriversWithTerm(term);
+
+    if (results.length === 1) {
+      await loadDriver(results[0].__row);
+      showStatus('Fahrer automatisch geladen: ' + term, 'success');
+    } else if (results.length === 0) {
+      showStatus('Kein Fahrer zu "' + term + '" gefunden.', 'error');
+    } else {
+      showStatus(results.length + ' Treffer – bitte auswählen.', 'info');
+    }
   }
 
   /* ============================================================
@@ -322,17 +332,24 @@
   async function searchDrivers() {
     const input = document.getElementById('searchInput');
     const term = input ? input.value.trim() : '';
+    stopScanner();
+    return await searchDriversWithTerm(term);
+  }
+
+  async function searchDriversWithTerm(term) {
     setLoading(true);
     hideDuplicateWarning();
     try {
       const result = await gasGet('searchDrivers', { term });
       setLoading(false);
-      renderResults(result || []);
+      const list = result || [];
+      renderResults(list);
+      return list;
     } catch (err) {
       setLoading(false);
       showError(err);
+      return [];
     }
-    stopScanner();
   }
 
   function renderResults(data) {
