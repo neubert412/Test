@@ -452,12 +452,8 @@
         }
       }
 
-      // CheckIn ist nicht schreibgeschützt
-      if (field.name === 'CheckIn') {
-        input.disabled = true;
-      } else {
-        input.disabled = field.editable === true;
-      }
+      // Schreibschutz: deaktiviert nur, wenn die Konfiguration es so vorgibt
+      input.disabled = field.editable === false;
 
       wrapper.appendChild(label);
       wrapper.appendChild(input);
