@@ -279,9 +279,9 @@
 
   /**
    * Verarbeitet einen gescannten QR-Code.
-   * - Genau 1 Treffer → Formular direkt laden
+   * - Genau 1 Treffer → Check-In setzen und Formular laden
    * - 0 Treffer → Fehlermeldung
-   * - >1 Treffer → Liste anzeigen
+   * - >1 Treffer → Liste anzeigen (kein Check-In)
    */
   async function handleQrCodeResult(text) {
     const searchInput = document.getElementById('searchInput');
@@ -304,12 +304,24 @@
     const results = await searchDriversWithTerm(term);
 
     if (results.length === 1) {
-      await loadDriver(results[0].__row);
-      showStatus('Fahrer automatisch geladen: ' + term, 'success');
+      const row = results[0].__row;
+
+      // 1) Check-In setzen (nur beim QR-Scan)
+      try {
+        await gasPost('setCheckIn', { row: row });
+        showStatus('Check-In gesetzt: ' + term, 'success');
+      } catch (err) {
+        console.error('Check-In fehlgeschlagen:', err);
+        showStatus('Fahrer geladen, aber Check-In fehlgeschlagen: ' + (err.message || err), 'error');
+      }
+
+      // 2) Fahrer laden (Karteikarte anzeigen)
+      await loadDriver(row);
+      showStatus('Fahrer automatisch geladen und eingecheckt: ' + term, 'success');
     } else if (results.length === 0) {
       showStatus('Kein Fahrer zu "' + term + '" gefunden.', 'error');
     } else {
-      showStatus(results.length + ' Treffer – bitte auswählen.', 'info');
+      showStatus(results.length + ' Treffer – bitte auswählen (kein Check-In gesetzt).', 'info');
     }
   }
 
@@ -426,9 +438,27 @@
         input.type = 'text';
         input.dataset.field = field.name;
         input.value = data[field.name] || '';
+
+        // CheckIn optisch hervorheben, wenn gesetzt
+        if (field.name === 'CheckIn') {
+          const isChecked = String(data[field.name] || '').trim().toUpperCase() === 'X';
+          input.style.fontWeight = 'bold';
+          input.style.textAlign = 'center';
+          if (isChecked) {
+            input.style.background = '#e6f4ea';
+            input.style.color = '#137333';
+            input.style.borderColor = '#137333';
+          }
+        }
       }
 
-      input.disabled = field.editable === false;
+      // CheckIn ist immer schreibgeschützt
+      if (field.name === 'CheckIn') {
+        input.disabled = true;
+      } else {
+        input.disabled = field.editable === false;
+      }
+
       wrapper.appendChild(label);
       wrapper.appendChild(input);
       form.appendChild(wrapper);
@@ -501,7 +531,7 @@
       isNewDriver = false;
       renderForm(result);
       updateMode('Bestehende Anmeldung · Zeile ' + currentRow);
-      showStatus(currentRow ? 'Änderungen gespeichert.' : 'Anmeldung erfolgreich gespeichert.', 'success');
+      showStatus('Änderungen gespeichert.', 'success');
       if (!currentRow) searchDrivers();
     } catch (err) {
       setLoading(false);
