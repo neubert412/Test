@@ -72,7 +72,7 @@
   </div>
 
   <div class="search">
-    <input id="searchInput" type="text" placeholder="Name, Vorname oder Startnummer...">
+    <input id="searchInput" type="text" placeholder="Name, Vorname, Startnummer oder Klasse...">
     <button id="searchButton" class="primary">Suchen</button>
   </div>
 
@@ -115,7 +115,9 @@
     init();
   });
 
-  /* ---------------- GAS-API-WRAPPER ---------------- */
+  /* ============================================================
+     GAS-API-WRAPPER
+     ============================================================ */
 
   async function gasGet(action, params = {}) {
     const url = new URL(GAS_URL);
@@ -137,7 +139,7 @@
     }
     const res = await fetch(GAS_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // wichtig: kein Preflight
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify(body),
       redirect: 'follow'
     });
@@ -146,7 +148,9 @@
     return json.data;
   }
 
-  /* ---------------- SCANNER ---------------- */
+  /* ============================================================
+     QR-SCANNER
+     ============================================================ */
 
   async function toggleScanner() {
     const readerDiv = document.getElementById('reader');
@@ -233,16 +237,75 @@
       .finally(() => { e.target.value = ''; });
   }
 
-  function handleQrCodeResult(text) {
-    const searchInput = document.getElementById('searchInput');
-    if (searchInput) {
-      searchInput.value = text;
-      showStatus('QR-Code erfolgreich eingelesen!', 'success');
-      searchDrivers();
-    }
+  /* ============================================================
+     QR-TEXT-PARSER
+     ============================================================ */
+
+  /**
+   * Parst QR-Text im Format "Label: Wert" pro Zeile.
+   * Gibt null zurück, wenn kein bekanntes Label gefunden wurde.
+   */
+  function parseQrText(text) {
+    if (!text) return null;
+
+    const lines = String(text).split(/\r?\n/);
+    const map = {};
+
+    lines.forEach(line => {
+      const match = line.match(/^\s*([^:]+?)\s*:\s*(.+?)\s*$/);
+      if (!match) return;
+      const key = match[1].toLowerCase().trim();
+      const value = match[2].trim();
+
+      if (key === 'vorname')                                          map.vorname = value;
+      else if (key === 'nachname' || key === 'name')                  map.nachname = value;
+      else if (key === 'startnummer' || key === 'wunschstartnummer')  map.startnummer = value;
+      else if (key === 'klasse')                                      map.klasse = value;
+      else if (key === 'transponder' || key === 'transponder #')      map.transponder = value;
+    });
+
+    if (!map.vorname && !map.nachname && !map.startnummer) return null;
+    return map;
   }
 
-  /* ---------------- DATEN (via fetch) ---------------- */
+  /**
+   * Baut aus dem geparsten QR-Code einen Suchbegriff:
+   * "Aleksandra Herrmann 91 Ladies"
+   */
+  function buildSearchTerm(parsed, fallbackText) {
+    if (!parsed) return String(fallbackText || '').trim();
+
+    const parts = [
+      parsed.vorname,
+      parsed.nachname,
+      parsed.startnummer,
+      parsed.klasse
+    ].filter(Boolean);
+
+    return parts.join(' ').trim() || String(fallbackText || '').trim();
+  }
+
+  function handleQrCodeResult(text) {
+    const searchInput = document.getElementById('searchInput');
+    if (!searchInput) return;
+
+    const parsed = parseQrText(text);
+    const term = buildSearchTerm(parsed, text);
+
+    searchInput.value = term;
+
+    if (parsed) {
+      showStatus('QR-Code erkannt: ' + term, 'success');
+    } else {
+      showStatus('QR-Code eingelesen (unbekanntes Format).', 'info');
+    }
+
+    searchDrivers();
+  }
+
+  /* ============================================================
+     DATEN (via fetch)
+     ============================================================ */
 
   async function init() {
     setLoading(true);
