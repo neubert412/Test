@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fahreranmeldung</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; margin: 0; padding: 16px; background: #f5f6f8; color: #202124; }
+    h2 { margin: 0 0 14px; font-size: 20px; }
+
+    .scanner-container { margin-bottom: 12px; background: white; border: 1px solid #dadce0; border-radius: 8px; padding: 10px; text-align: center; }
+    #reader { width: 100%; max-width: 400px; margin: 0 auto; border-radius: 6px; overflow: hidden; display: none; margin-bottom: 8px; }
+
+    .scan-actions { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; margin-top: 6px; }
+    .file-label { display: inline-block; padding: 9px 12px; border-radius: 6px; background: #e8eaed; color: #202124; cursor: pointer; font-size: 14px; }
+    .file-label:hover { opacity: 0.9; }
+    .file-label input { display: none; }
+
+    .search { display: flex; gap: 6px; margin-bottom: 10px; }
+    .search input { flex: 1; }
+
+    input, select { width: 100%; padding: 9px 10px; border: 1px solid #dadce0; border-radius: 6px; background: white; color: #202124; font-size: 14px; outline: none; }
+    input:focus, select:focus { border-color: #1a73e8; box-shadow: 0 0 0 1px #1a73e8; }
+    input:disabled, select:disabled { background: #f1f3f4; color: #5f6368; cursor: not-allowed; }
+
+    button { border: 0; border-radius: 6px; padding: 9px 12px; cursor: pointer; font-size: 14px; white-space: nowrap; transition: opacity 0.15s ease; }
+    button:hover { opacity: 0.9; }
+    .primary { background: #1a73e8; color: white; }
+    .secondary { background: #e8eaed; color: #202124; }
+    .danger { background: #d93025; color: white; }
+
+    .results { background: white; border: 1px solid #dadce0; border-radius: 8px; overflow: hidden; margin-bottom: 14px; }
+    .result { padding: 10px 12px; border-bottom: 1px solid #eee; cursor: pointer; transition: background 0.15s ease; }
+    .result:hover { background: #f1f3f4; }
+    .result-title { font-weight: bold; color: #202124; }
+    .result-sub { color: #5f6368; font-size: 12px; margin-top: 3px; }
+    .empty { padding: 13px; text-align: center; color: #5f6368; font-size: 13px; }
+
+    .mode { font-size: 12px; color: #5f6368; margin: 4px 0 8px; }
+    .form { background: white; padding: 14px; border: 1px solid #dadce0; border-radius: 8px; }
+    .field { margin-bottom: 11px; }
+    label { display: block; font-size: 12px; font-weight: bold; color: #5f6368; margin-bottom: 5px; }
+
+    .duplicate-warning { margin-top: 10px; padding: 10px 12px; border-radius: 6px; background: #fce8e6; color: #c5221f; border: 1px solid #f5c2c0; font-size: 13px; white-space: pre-line; }
+    .actions { display: flex; gap: 7px; margin-top: 12px; }
+    .actions button { flex: 1; }
+
+    .status { display: none; padding: 9px 10px; margin-bottom: 10px; border-radius: 6px; font-size: 13px; white-space: pre-line; }
+    .status.success { display: block; background: #e6f4ea; color: #137333; }
+    .status.error { display: block; background: #fce8e6; color: #c5221f; }
+    .status.info { display: block; background: #e8f0fe; color: #1967d2; }
+    .loading { opacity: 0.55; pointer-events: none; }
+  </style>
+</head>
+
+<body>
+
+  <h2>Fahreranmeldung</h2>
+  <div id="status" class="status"></div>
+
+  <div class="scanner-container">
+    <div id="reader"></div>
+    <div class="scan-actions">
+      <button id="scanButton" class="secondary">📷 QR-Scanner öffnen</button>
+      <label class="file-label">🖼️ Foto hochladen
+        <input id="fileInput" type="file" accept="image/*">
+      </label>
+    </div>
+  </div>
+
+  <div class="search">
+    <input id="searchInput" type="text" placeholder="Name, Vorname oder Startnummer...">
+    <button id="searchButton" class="primary">Suchen</button>
+  </div>
+
+  <div id="results" class="results">
+    <div class="empty">Fahrer suchen oder neue Anmeldung erstellen.</div>
+  </div>
+
+  <div class="mode" id="mode">Keine Anmeldung ausgewählt</div>
+  <div id="form" class="form" style="display:none;"></div>
+  <div id="duplicateWarning" class="duplicate-warning" style="display:none;"></div>
+
+  <div id="actions" class="actions" style="display:none;">
+    <button id="newButton" class="secondary">Neue Anmeldung</button>
+    <button id="saveButton" class="primary">Speichern</button>
+  </div>
+
+<script>
+  /* ============================================================
+     ⚠️ HIER DEINE GAS-WEB-APP-URL EINTRAGEN (endet auf /exec)
+     ============================================================ */
+  const GAS_URL = 'https://script.google.com/macros/s/DEINE_ID_HIER/exec';
+
+  let fields = [];
+  let classes = [];
+  let currentRow = null;
+  let currentData = {};
+  let isNewDriver = false;
+  let html5QrCode = null;
+  let isScanning = false;
+
+  document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('scanButton').addEventListener('click', toggleScanner);
+    document.getElementById('searchButton').addEventListener('click', searchDrivers);
+    document.getElementById('newButton').addEventListener('click', newDriver);
+    document.getElementById('saveButton').addEventListener('click', save);
+    document.getElementById('searchInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') searchDrivers();
+    });
+    document.getElementById('fileInput').addEventListener('change', scanFromFile);
+    init();
+  });
+
+  /* ---------------- GAS-API-WRAPPER ---------------- */
+
+  async function gasGet(action, params = {}) {
+    const url = new URL(GAS_URL);
+    url.searchParams.set('action', action);
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+    const res = await fetch(url.toString(), { redirect: 'follow' });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || 'Unbekannter Serverfehler');
+    return json.data;
+  }
+
+  async function gasPost(action, payload) {
+    const body = { action };
+    if (payload && payload.data !== undefined) {
+      body.data = payload.data;
+      if (payload.row !== undefined) body.row = payload.row;
+    } else {
+      body.data = payload;
+    }
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // wichtig: kein Preflight
+      body: JSON.stringify(body),
+      redirect: 'follow'
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || 'Unbekannter Serverfehler');
+    return json.data;
+  }
+
+  /* ---------------- SCANNER ---------------- */
+
+  async function toggleScanner() {
+    const readerDiv = document.getElementById('reader');
+    const scanButton = document.getElementById('scanButton');
+    if (!readerDiv || !scanButton) return;
+
+    if (!isScanning) {
+      readerDiv.style.display = 'block';
+      scanButton.textContent = '❌ Scanner schließen';
+      scanButton.className = 'danger';
+      isScanning = true;
+
+      try {
+        if (!html5QrCode) html5QrCode = new Html5Qrcode("reader");
+        await html5QrCode.start(
+          { facingMode: "environment" },
+          { fps: 10, qrbox: { width: 250, height: 250 } },
+          (decodedText) => handleQrCodeResult(decodedText),
+          () => {}
+        );
+      } catch (err) {
+        console.error("Scanner-Start fehlgeschlagen:", err);
+        isScanning = false;
+        readerDiv.style.display = 'none';
+        scanButton.textContent = '📷 QR-Scanner öffnen';
+        scanButton.className = 'secondary';
+        showStatus(
+          "Kamera nicht verfügbar oder gesperrt (" +
+          (err && err.message ? err.message : err) +
+          ").\nBitte alternativ ein Foto hochladen.",
+          "error"
+        );
+      }
+    } else {
+      stopScanner();
+    }
+  }
+
+  function stopScanner() {
+    const readerDiv = document.getElementById('reader');
+    const scanButton = document.getElementById('scanButton');
+
+    if (html5QrCode && html5QrCode.isScanning) {
+      html5QrCode.stop().then(() => {
+        if (readerDiv) readerDiv.style.display = 'none';
+        if (scanButton) {
+          scanButton.textContent = '📷 QR-Scanner öffnen';
+          scanButton.className = 'secondary';
+        }
+        isScanning = false;
+      }).catch(err => {
+        console.error("Fehler beim Stoppen des Scanners:", err);
+        cleanupScannerUI();
+      });
+    } else {
+      cleanupScannerUI();
+    }
+  }
+
+  function cleanupScannerUI() {
+    const readerDiv = document.getElementById('reader');
+    const scanButton = document.getElementById('scanButton');
+    if (readerDiv) readerDiv.style.display = 'none';
+    if (scanButton) {
+      scanButton.textContent = '📷 QR-Scanner öffnen';
+      scanButton.className = 'secondary';
+    }
+    isScanning = false;
+  }
+
+  function scanFromFile(e) {
+    if (!e.target.files || e.target.files.length === 0) return;
+    const imageFile = e.target.files[0];
+    const readerDiv = document.getElementById('reader');
+    readerDiv.style.display = 'block';
+
+    const html5QrCodeFile = new Html5Qrcode("reader");
+    html5QrCodeFile.scanFile(imageFile, true)
+      .then(decodedText => { handleQrCodeResult(decodedText); stopScanner(); })
+      .catch(() => {
+        readerDiv.style.display = 'none';
+        showStatus("QR-Code konnte im Bild nicht erkannt werden.", "error");
+      })
+      .finally(() => { e.target.value = ''; });
+  }
+
+  function handleQrCodeResult(text) {
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) {
+      searchInput.value = text;
+      showStatus('QR-Code erfolgreich eingelesen!', 'success');
+      searchDrivers();
+    }
+  }
+
+  /* ---------------- DATEN (via fetch) ---------------- */
+
+  async function init() {
+    setLoading(true);
+    try {
+      fields = await gasGet('getFields') || [];
+      classes = await gasGet('getClasses') || [];
+      setLoading(false);
+    } catch (err) {
+      setLoading(false);
+      showError(err);
+    }
+  }
+
+  async function searchDrivers() {
+    const input = document.getElementById('searchInput');
+    const term = input ? input.value.trim() : '';
+    setLoading(true);
+    hideDuplicateWarning();
+    try {
+      const result = await gasGet('searchDrivers', { term });
+      setLoading(false);
+      renderResults(result || []);
+    } catch (err) {
+      setLoading(false);
+      showError(err);
+    }
+    stopScanner();
+  }
+
+  function renderResults(data) {
+    const container = document.getElementById('results');
+    if (!container) return;
+
+    if (!data || data.length === 0) {
+      container.innerHTML = '<div class="empty">Keine Fahrer gefunden.</div>';
+      return;
+    }
+
+    container.innerHTML = '';
+    data.forEach(driver => {
+      const div = document.createElement('div');
+      div.className = 'result';
+      const name = [driver['Vorname'] || '', driver['Name'] || ''].filter(Boolean).join(' ');
+      const start = driver['Startnummer'] || driver['Wunschstartnummer'] || '';
+      const klasse = driver['Klasse'] || '';
+      const transponder = driver['Transponder #'] || '';
+      const sub = [];
+      if (start) sub.push('Startnummer ' + start);
+      if (klasse) sub.push('Klasse ' + klasse);
+      if (transponder) sub.push('Transponder ' + transponder);
+
+      div.innerHTML = `
+        <div class="result-title">${escapeHtml(name || 'Unbekannter Fahrer')}</div>
+        <div class="result-sub">${escapeHtml(sub.join(' · '))}</div>
+      `;
+      div.addEventListener('click', () => loadDriver(driver.__row));
+      container.appendChild(div);
+    });
+  }
+
+  async function loadDriver(row) {
+    setLoading(true);
+    hideDuplicateWarning();
+    try {
+      const data = await gasGet('getDriver', { row });
+      setLoading(false);
+      currentRow = data.__row;
+      currentData = data || {};
+      isNewDriver = false;
+      renderForm(data);
+      updateMode('Bestehende Anmeldung · Zeile ' + currentRow);
+      showStatus('Fahrer geladen.', 'info');
+    } catch (err) {
+      setLoading(false);
+      showError(err);
+    }
+  }
+
+  function renderForm(data) {
+    data = data || {};
+    const form = document.getElementById('form');
+    if (!form) return;
+
+    form.innerHTML = '';
+    fields.forEach(field => {
+      if (field.visible === false) return;
+      const wrapper = document.createElement('div');
+      wrapper.className = 'field';
+      const label = document.createElement('label');
+      label.textContent = field.name;
+
+      let input;
+      if (field.name === 'Klasse') {
+        input = document.createElement('select');
+        input.dataset.field = field.name;
+        addOption(input, '', 'Bitte auswählen');
+        classes.forEach(v => addOption(input, v, v));
+        input.value = data[field.name] || '';
+      } else {
+        input = document.createElement('input');
+        input.type = 'text';
+        input.dataset.field = field.name;
+        input.value = data[field.name] || '';
+      }
+
+      input.disabled = field.editable === false;
+      wrapper.appendChild(label);
+      wrapper.appendChild(input);
+      form.appendChild(wrapper);
+    });
+
+    form.style.display = 'block';
+    const actions = document.getElementById('actions');
+    if (actions) actions.style.display = 'flex';
+  }
+
+  function addOption(select, value, label) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    select.appendChild(option);
+  }
+
+  function newDriver() {
+    currentRow = null;
+    currentData = {};
+    isNewDriver = true;
+    hideDuplicateWarning();
+    renderForm({});
+    updateMode('Neue Anmeldung');
+    showStatus('Neue Anmeldung vorbereitet.', 'info');
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) searchInput.value = '';
+  }
+
+  function collectFormData() {
+    const data = {};
+    document.querySelectorAll('#form input, #form select').forEach(input => {
+      if (input.disabled) return;
+      data[input.dataset.field] = input.value;
+    });
+    return data;
+  }
+
+  function validateForm(data) {
+    const recordFields = ['Klasse', 'Vorname', 'Name', 'Startnummer'];
+    const missing = [];
+    recordFields.forEach(field => {
+      if (Object.prototype.hasOwnProperty.call(data, field)) {
+        if (!String(data[field] || '').trim()) missing.push(field);
+      }
+    });
+    if (missing.length) {
+      showError('Bitte folgende Felder ausfüllen:\n\n' + missing.join('\n'));
+      return false;
+    }
+    return true;
+  }
+
+  async function save() {
+    hideDuplicateWarning();
+    const data = collectFormData();
+    if (!validateForm(data)) return;
+
+    setLoading(true);
+    try {
+      let result;
+      if (currentRow) {
+        result = await gasPost('updateDriver', { row: currentRow, data });
+      } else {
+        result = await gasPost('createDriver', { data });
+      }
+      setLoading(false);
+      currentRow = result.__row;
+      currentData = result || {};
+      isNewDriver = false;
+      renderForm(result);
+      updateMode('Bestehende Anmeldung · Zeile ' + currentRow);
+      showStatus(currentRow ? 'Änderungen gespeichert.' : 'Anmeldung erfolgreich gespeichert.', 'success');
+      if (!currentRow) searchDrivers();
+    } catch (err) {
+      setLoading(false);
+      showError(err);
+    }
+  }
+
+  function updateMode(text) {
+    const mode = document.getElementById('mode');
+    if (mode) mode.textContent = text;
+  }
+
+  function showStatus(message, type) {
+    const status = document.getElementById('status');
+    if (!status) return;
+    status.textContent = message;
+    status.className = 'status ' + (type || 'info');
+  }
+
+  function hideDuplicateWarning() {
+    const warning = document.getElementById('duplicateWarning');
+    if (!warning) return;
+    warning.textContent = '';
+    warning.style.display = 'none';
+  }
+
+  function showError(error) {
+    setLoading(false);
+    let message = 'Unbekannter Fehler';
+    if (error) message = error.message ? error.message : String(error);
+    const warning = document.getElementById('duplicateWarning');
+    if (warning) {
+      warning.textContent = message;
+      warning.style.display = 'block';
+    }
+  }
+
+  function setLoading(value) {
+    document.body.classList.toggle('loading', Boolean(value));
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+</script>
+
+</body>
+</html>
